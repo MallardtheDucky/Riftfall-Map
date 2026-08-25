@@ -18,12 +18,12 @@
   };
 
     const bootLines = [
-    "CONTINUANCE NETWORK // TERMINAL AUTH — REQUESTING UPLINK",
+    "CONTINUANCE NETWORK // TERMINAL AUTH : REQUESTING UPLINK",
     "VERIFYING ARCHIVE INTEGRITY ................. OK",
     "DECRYPTING FACTION HOLDINGS REGISTER ......... OK",
     "LOADING CARTOGRAPHIC SURVEY (CUSTOM.GEO) ..... OK",
     "CROSS-REFERENCING 25 KNOWN ENTITIES .......... OK",
-    "CLEARANCE LEVEL: OBSERVER — READ ONLY",
+    "CLEARANCE LEVEL: OBSERVER: READ ONLY",
     "",
     "WELCOME TO THE CONTINUANCE SURVEILLANCE ARCHIVE"
   ];
@@ -62,7 +62,7 @@
     zoomControl: true,
     attributionControl: true
   });
-  map.attributionControl.setPrefix('Boundaries: Natural Earth / amCharts geodata (free-licensed) — Rendered with Leaflet');
+  map.attributionControl.setPrefix('Boundaries: Natural Earth / amCharts geodata (free-licensed)  Rendered with Leaflet');
 
   let worldLayer = null;
   let factionLayerGroup = L.layerGroup().addTo(map);
@@ -170,7 +170,7 @@
           style: ()=> ({ color:'#5c7b74', weight:1.4, fillColor:'#12211f', fillOpacity:0.55 })
         }).addTo(regionalCountryLayer);
         document.getElementById('regional-note').textContent =
-          'NO REGIONAL SUBDIVISION SURVEY ON FILE — NATIONAL BOUNDARY ONLY';
+          'NO REGIONAL SUBDIVISION SURVEY ON FILE: NATIONAL BOUNDARY ONLY';
         if(iso3 === 'RUS'){
           rmap.fitBounds([[41, 19], [82, 180]], { padding:[20,20], duration:0.4, maxZoom:4 });
         } else {
@@ -230,7 +230,7 @@
       });
       const m = L.marker([inc.lat, inc.lon], { icon });
       m.bindPopup(
-        '<div class="popup-faction">' + inc.year + ' — HISTORICAL RECORD</div>' +
+        '<div class="popup-faction">' + inc.year + ' : HISTORICAL RECORD</div>' +
         '<div class="popup-title">' + escapeHtml(inc.name) + '</div>' +
         '<div class="popup-coords" style="margin-top:6px; color:#7d8c8f;">' + escapeHtml(inc.note) + '</div>'
       );
@@ -322,7 +322,7 @@
     });
     const marker = L.marker([inc.lat, inc.lon], { icon });
     marker.bindPopup(
-      '<div class="popup-faction">' + inc.year + ' — HISTORICAL RECORD</div>' +
+      '<div class="popup-faction">' + inc.year + ' : HISTORICAL RECORD</div>' +
       '<div class="popup-title">' + escapeHtml(inc.name) + '</div>' +
       '<div class="popup-loc">' + escapeHtml(inc.loc) + '</div>' +
       '<div class="popup-coords" style="margin-top:6px; color:#7d8c8f;">' + escapeHtml(inc.note) + '</div>'
@@ -484,8 +484,8 @@
   });
 
     document.getElementById('legend').innerHTML =
-    '<span class="leg-item"><span class="leg-key">Amber ring</span> — approximate</span>' +
-    '<span class="leg-item"><span class="leg-key">Red dashed</span> — classified</span>';
+    '<span class="leg-item"><span class="leg-key">Amber ring</span> : approximate</span>' +
+    '<span class="leg-item"><span class="leg-key">Red dashed</span> : classified</span>';
 
     function setStatus(id, text){
     const el = document.getElementById(id);
