@@ -18,12 +18,12 @@
   };
 
     const bootLines = [
-    "CONTINUANCE NETWORK // TERMINAL AUTH — REQUESTING UPLINK",
+    "CONTINUANCE NETWORK // TERMINAL AUTH - REQUESTING UPLINK",
     "VERIFYING ARCHIVE INTEGRITY ................. OK",
     "DECRYPTING FACTION HOLDINGS REGISTER ......... OK",
     "LOADING CARTOGRAPHIC SURVEY (CUSTOM.GEO) ..... OK",
     "CROSS-REFERENCING 25 KNOWN ENTITIES .......... OK",
-    "CLEARANCE LEVEL: OBSERVER — READ ONLY",
+    "CLEARANCE LEVEL: OBSERVER - READ ONLY",
     "",
     "WELCOME TO THE CONTINUANCE SURVEILLANCE ARCHIVE"
   ];
@@ -62,7 +62,7 @@
     zoomControl: true,
     attributionControl: true
   });
-  map.attributionControl.setPrefix('Boundaries: Natural Earth / amCharts geodata (free-licensed) — Rendered with Leaflet');
+  map.attributionControl.setPrefix('Boundaries: Natural Earth / amCharts geodata (free-licensed) - Rendered with Leaflet');
 
   let worldLayer = null;
   let factionLayerGroup = L.layerGroup().addTo(map);
@@ -78,7 +78,9 @@
     el.classList.add('active');
   }
 
-    fetch('geodata/world.json').then(r=>r.json()).then(world=>{
+    (function(){
+    try{
+    const world = window.CONTINUANCE_WORLD;
 
     const makeWorld = (offset)=> L.geoJSON(world, {
       coordsToLatLng: coords => L.latLng(coords[1], coords[0] + offset),
@@ -97,10 +99,11 @@
     ]).addTo(map);
 
     setStatus('cartography-status', 'WORLD SURVEY LOADED');
-  }).catch(err=>{
-    console.error(err);
-    setStatus('cartography-status', 'WORLD SURVEY LOAD FAILED');
-  });
+    }catch(err){
+      console.error(err);
+      setStatus('cartography-status', 'WORLD SURVEY LOAD FAILED');
+    }
+  })();
 
   function baseCountryStyle(){
     return { color:'#4f6f6a', weight:1, fillColor:'#0e2b26', fillOpacity:0.42 };
@@ -170,7 +173,7 @@
           style: ()=> ({ color:'#5c7b74', weight:1.4, fillColor:'#12211f', fillOpacity:0.55 })
         }).addTo(regionalCountryLayer);
         document.getElementById('regional-note').textContent =
-          'NO REGIONAL SUBDIVISION SURVEY ON FILE — NATIONAL BOUNDARY ONLY';
+          'NO REGIONAL SUBDIVISION SURVEY ON FILE - NATIONAL BOUNDARY ONLY';
         if(iso3 === 'RUS'){
           rmap.fitBounds([[41, 19], [82, 180]], { padding:[20,20], duration:0.4, maxZoom:4 });
         } else {
@@ -182,14 +185,11 @@
 
     if(!iso3){ finish(null); return; }
     if(geoCache[iso3]){ finish(geoCache[iso3]); return; }
-    fetch('geodata/countries/' + iso3 + '.json').then(r=>{
-      if(!r.ok) throw new Error('not found');
-      return r.json();
-    }).then(gj=>{ geoCache[iso3] = gj; finish(gj); }).catch(()=> finish(null));
+    const gj = (window.CONTINUANCE_COUNTRY_GEO || {})[iso3];
+    if(gj){ geoCache[iso3] = gj; finish(gj); } else { finish(null); }
   }
 
   function locMatchesCountry(loc, countryName){
-    // Word-boundary match so "Niger" doesn't false-match inside "Nigeria", etc.
     const escaped = countryName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     return new RegExp('(^|[^A-Za-z])' + escaped + '($|[^A-Za-z])').test(loc);
   }
@@ -230,7 +230,7 @@
       });
       const m = L.marker([inc.lat, inc.lon], { icon });
       m.bindPopup(
-        '<div class="popup-faction">' + inc.year + ' — HISTORICAL RECORD</div>' +
+        '<div class="popup-faction">' + inc.year + ' - HISTORICAL RECORD</div>' +
         '<div class="popup-title">' + escapeHtml(inc.name) + '</div>' +
         '<div class="popup-coords" style="margin-top:6px; color:#7d8c8f;">' + escapeHtml(inc.note) + '</div>'
       );
@@ -322,7 +322,7 @@
     });
     const marker = L.marker([inc.lat, inc.lon], { icon });
     marker.bindPopup(
-      '<div class="popup-faction">' + inc.year + ' — HISTORICAL RECORD</div>' +
+      '<div class="popup-faction">' + inc.year + ' - HISTORICAL RECORD</div>' +
       '<div class="popup-title">' + escapeHtml(inc.name) + '</div>' +
       '<div class="popup-loc">' + escapeHtml(inc.loc) + '</div>' +
       '<div class="popup-coords" style="margin-top:6px; color:#7d8c8f;">' + escapeHtml(inc.note) + '</div>'
@@ -484,8 +484,8 @@
   });
 
     document.getElementById('legend').innerHTML =
-    '<span class="leg-item"><span class="leg-key">Amber ring</span> — approximate</span>' +
-    '<span class="leg-item"><span class="leg-key">Red dashed</span> — classified</span>';
+    '<span class="leg-item"><span class="leg-key">Amber ring</span> - approximate</span>' +
+    '<span class="leg-item"><span class="leg-key">Red dashed</span> - classified</span>';
 
     function setStatus(id, text){
     const el = document.getElementById(id);
