@@ -525,14 +525,4 @@
   hideBarBtn.addEventListener('click', ()=> setBarHidden(true));
   showBarTab.addEventListener('click', ()=> setBarHidden(false));
 
-    const hideSidebarBtn = document.getElementById('hide-sidebar-btn');
-  const showSidebarTab = document.getElementById('show-sidebar-tab');
-  function setSidebarHidden(hidden){
-    shellEl.classList.toggle('sidebar-hidden', hidden);
-    showSidebarTab.classList.toggle('visible', hidden);
-    setTimeout(()=> map.invalidateSize(), 200);
-  }
-  hideSidebarBtn.addEventListener('click', ()=> setSidebarHidden(true));
-  showSidebarTab.addEventListener('click', ()=> setSidebarHidden(false));
-
 })();
