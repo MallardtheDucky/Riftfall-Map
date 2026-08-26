@@ -134,7 +134,7 @@
     const name = feature.properties.name;
     const iso3 = COUNTRY_MAP[name];
 
-    if(selectedLayer && selectedLayer !== layer) worldLayer.resetStyle(selectedLayer);
+    if(selectedLayer && selectedLayer !== layer) selectedLayer.setStyle(baseCountryStyle());
     selectedLayer = layer;
     layer.setStyle(selectedCountryStyle());
     layer.bringToFront();
@@ -240,7 +240,7 @@
 
   function closeRegionalWindow(){
     document.getElementById('regional-panel').classList.remove('open');
-    if(selectedLayer){ worldLayer.resetStyle(selectedLayer); selectedLayer = null; }
+    if(selectedLayer){ selectedLayer.setStyle(baseCountryStyle()); selectedLayer = null; }
   }
   document.getElementById('regional-close').addEventListener('click', closeRegionalWindow);
 
