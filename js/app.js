@@ -60,14 +60,9 @@
     maxZoom: 9,
     worldCopyJump: true,
     zoomControl: true,
-    attributionControl: true
+    attributionControl: false
   });
-  map.attributionControl.setPrefix('Boundaries: Natural Earth / amCharts geodata (free-licensed) · Rendered with Leaflet');
 
-  // Country outlines live in their own pane, below the default overlay
-  // pane that circle-marker holdings use, so bringing a selected country
-  // to the front (for its highlight border) can never sit on top of and
-  // block clicks on the site markers inside it.
   map.createPane('countryPane');
   map.getPane('countryPane').style.zIndex = 390;
 
@@ -76,7 +71,6 @@
   let zoneLayerGroup = L.layerGroup().addTo(map);
   let incidentLayerGroup = L.layerGroup().addTo(map);
   let selectedLayer = null;
-  const geoCache = {};
 
   function scanFlash(){
     const el = document.getElementById('scan-flash');
@@ -85,11 +79,18 @@
     el.classList.add('active');
   }
 
+  const ENCLAVE_AREA_THRESHOLD = 0.3;
+  let enclaveLayerGroup = L.layerGroup(); 
+  map.createPane('enclavePane');
+  map.getPane('enclavePane').style.zIndex = 395; 
+
     (function(){
     try{
     const world = window.CONTINUANCE_WORLD;
+    const orderedFeatures = (world.features || []).slice().sort((a,b)=> bboxArea(b) - bboxArea(a));
+    const orderedWorld = { type:'FeatureCollection', features: orderedFeatures };
 
-    const makeWorld = (offset)=> L.geoJSON(world, {
+    const makeWorld = (offset)=> L.geoJSON(orderedWorld, {
       pane: 'countryPane',
       coordsToLatLng: coords => L.latLng(coords[1], coords[0] + offset),
       style: baseCountryStyle,
@@ -97,6 +98,21 @@
         layer.on('mouseover', ()=>{ if(layer !== selectedLayer) layer.setStyle(hoverCountryStyle()); });
         layer.on('mouseout', ()=>{ if(layer !== selectedLayer) layer.setStyle(baseCountryStyle()); });
         layer.on('click', ()=> openRegionalWindow(feature, layer));
+
+        if(bboxArea(feature) < ENCLAVE_AREA_THRESHOLD){
+          const c = featureCentroid(feature);
+          if(c){
+            const proxy = L.circleMarker([c[1], c[0] + offset], {
+              pane: 'enclavePane', radius: 7, weight: 1.5,
+              color: '#8fe8da', fillColor: '#5fd4c4', fillOpacity: 0.85
+            });
+            proxy.bindTooltip(feature.properties.name, { direction:'top', offset:[0,-8] });
+            proxy.on('mouseover', ()=>{ if(layer !== selectedLayer) layer.setStyle(hoverCountryStyle()); });
+            proxy.on('mouseout', ()=>{ if(layer !== selectedLayer) layer.setStyle(baseCountryStyle()); });
+            proxy.on('click', ()=> openRegionalWindow(feature, layer));
+            proxy.addTo(enclaveLayerGroup);
+          }
+        }
       }
     });
 
@@ -138,9 +154,259 @@
     return regionalMap;
   }
 
+  const GB = window.CONTINUANCE_GEOBOUNDARIES;
+
+  function flattenRings(geom){
+    if(!geom) return [];
+    if(geom.type === 'Polygon') return geom.coordinates;
+    if(geom.type === 'MultiPolygon') return geom.coordinates.reduce((a,p)=> a.concat(p), []);
+    return [];
+  }
+  function pointInRings(lon, lat, rings){
+    let inside = false;
+    rings.forEach(ring=>{
+      for(let i=0, j=ring.length-1; i<ring.length; j=i++){
+        const xi = ring[i][0], yi = ring[i][1];
+        const xj = ring[j][0], yj = ring[j][1];
+        const crosses = ((yi > lat) !== (yj > lat)) &&
+          (lon < (xj - xi) * (lat - yi) / (yj - yi) + xi);
+        if(crosses) inside = !inside;
+      }
+    });
+    return inside;
+  }
+  function featureCentroid(feature){
+    const geom = feature && feature.geometry;
+    if(!geom) return null;
+    let ring = null;
+    if(geom.type === 'Polygon') ring = geom.coordinates[0];
+    else if(geom.type === 'MultiPolygon'){
+      let bestLen = -1;
+      geom.coordinates.forEach(poly=>{
+        if(poly[0] && poly[0].length > bestLen){ bestLen = poly[0].length; ring = poly[0]; }
+      });
+    }
+    if(!ring || !ring.length) return null;
+    let sx = 0, sy = 0;
+    ring.forEach(c=>{ sx += c[0]; sy += c[1]; });
+    return [sx / ring.length, sy / ring.length]; 
+  }
+  function featureWithinParent(childFeature, parentFeature){
+    const c = featureCentroid(childFeature);
+    if(!c) return false;
+    return pointInRings(c[0], c[1], flattenRings(parentFeature.geometry));
+  }
+  function featureBBox(feature){
+    const geom = feature && feature.geometry;
+    if(!geom) return null;
+    let minX=Infinity, minY=Infinity, maxX=-Infinity, maxY=-Infinity;
+    const scan = ring => ring.forEach(c=>{
+      if(c[0]<minX) minX=c[0]; if(c[0]>maxX) maxX=c[0];
+      if(c[1]<minY) minY=c[1]; if(c[1]>maxY) maxY=c[1];
+    });
+    if(geom.type === 'Polygon') geom.coordinates.forEach(scan);
+    else if(geom.type === 'MultiPolygon') geom.coordinates.forEach(poly=> poly.forEach(scan));
+    else return null;
+    if(minX===Infinity) return null;
+    return { minX, minY, maxX, maxY };
+  }
+  function bboxOverlaps(a, b){
+    if(!a || !b) return false;
+    return a.minX <= b.maxX && a.maxX >= b.minX && a.minY <= b.maxY && a.maxY >= b.minY;
+  }
+  function bboxArea(feature){
+    const box = featureBBox(feature);
+    if(!box) return 0;
+    return Math.max(0, box.maxX-box.minX) * Math.max(0, box.maxY-box.minY);
+  }
+  function subdivName(f){
+    return (f.properties && (f.properties.shapeName || f.properties.name)) || 'Unknown Division';
+  }
+
+  let currentIso3 = null;
+  let currentCountryFeature = null;
+  let currentCountryName = null;
+  let currentLevels = []; 
+  let viewStack = []; 
+
+  function renderBreadcrumbs(){
+    const el = document.getElementById('regional-breadcrumbs');
+    if(!el) return;
+    el.innerHTML = '';
+    viewStack.forEach((v, i)=>{
+      if(i > 0){
+        const sep = document.createElement('span');
+        sep.className = 'crumb-sep';
+        sep.textContent = '›';
+        el.appendChild(sep);
+      }
+      const span = document.createElement('span');
+      const isCurrent = i === viewStack.length - 1;
+      span.className = 'crumb' + (isCurrent ? ' current' : '');
+      span.textContent = v.label;
+      if(!isCurrent){
+        span.addEventListener('click', ()=>{
+          viewStack = viewStack.slice(0, i+1);
+          renderBreadcrumbs();
+          showLevel(v.levelIndex, v.parentFeature);
+        });
+      }
+      el.appendChild(span);
+    });
+  }
+
+  function renderFeatureSet(features, levelIndex, parentFeature){
+    regionalCountryLayer.clearLayers();
+    const hasDeeper = levelIndex + 1 < currentLevels.length;
+
+    if(parentFeature){
+      L.geoJSON(parentFeature, {
+        style: ()=> ({ color:'#e0a53f', weight:1.6, fillOpacity:0, dashArray:'4,3' }),
+        interactive: false
+      }).addTo(regionalCountryLayer);
+    }
+
+    const ordered = features.slice().sort((a,b)=> bboxArea(b) - bboxArea(a));
+
+    const sub = L.geoJSON({ type:'FeatureCollection', features: ordered }, {
+      style: ()=> ({ color:'#5c7b74', weight:1.1, fillColor:'#12211f', fillOpacity:0.55 }),
+      onEachFeature: (f, l)=>{
+        const nm = subdivName(f);
+        l.bindTooltip(nm, { className:'subdiv-label', sticky:true, direction:'top' });
+        l.on('mouseover', ()=> l.setStyle({ color:'#8fe8da', weight:1.8, fillColor:'#1c3d38', fillOpacity:0.7 }));
+        l.on('mouseout', ()=> l.setStyle({ color:'#5c7b74', weight:1.1, fillColor:'#12211f', fillOpacity:0.55 }));
+        if(hasDeeper){
+          l.on('add', ()=>{ const el = l.getElement && l.getElement(); if(el) el.style.cursor = 'pointer'; });
+          l.on('click', ()=>{
+            viewStack.push({ levelIndex: levelIndex+1, parentFeature: f, label: nm });
+            renderBreadcrumbs();
+            showLevel(levelIndex+1, f);
+          });
+        }
+      }
+    }).addTo(regionalCountryLayer);
+    sub.eachLayer(l=> l.bringToFront && l.bringToFront());
+
+    const lv = currentLevels[levelIndex];
+    document.getElementById('regional-note').textContent =
+      sub.getLayers().length + (sub.getLayers().length===1 ? ' DIVISION' : ' DIVISIONS') +
+      ' ON RECORD' + (hasDeeper ? ' // CLICK ONE TO VIEW ITS ' + (currentLevels[levelIndex+1].label || 'SUBDIVISIONS') : '');
+
+    Array.from(document.getElementById('regional-levels').children).forEach((c,i)=> c.classList.toggle('active', i===levelIndex));
+
+    const rmap = regionalMap;
+    if(parentFeature){
+      rmap.flyToBounds(L.geoJSON(parentFeature).getBounds(), { padding:[24,24], duration:0.4 });
+    } else if(currentIso3 === 'RUS'){
+      rmap.fitBounds([[41, 19], [82, 180]], { padding:[20,20], duration:0.4, maxZoom:4 });
+    } else if(sub.getLayers().length){
+      rmap.flyToBounds(sub.getBounds(), { padding:[20,20], duration:0.4 });
+    }
+    plotRegionalMarkers(currentCountryName);
+  }
+
+  function showLevel(levelIndex, parentFeature){
+    const lv = currentLevels[levelIndex];
+    if(!lv) return;
+    document.getElementById('regional-note').textContent = 'LOADING ' + lv.label + ' SURVEY…';
+    GB.fetchGeometry(currentIso3, lv.level, lv.url).then(gj=>{
+      let features = gj.features || [];
+      if(parentFeature){
+        let filtered = features.filter(f=> featureWithinParent(f, parentFeature));
+        if(!filtered.length){
+          const pbox = featureBBox(parentFeature);
+          filtered = features.filter(f=> bboxOverlaps(featureBBox(f), pbox));
+        }
+        if(filtered.length){
+          features = filtered;
+        } else {
+          renderEmptyLevel(parentFeature, levelIndex);
+          return;
+        }
+      }
+      renderFeatureSet(features, levelIndex, parentFeature);
+    }).catch(err=>{
+      console.error('geoBoundaries geometry fetch failed for', currentIso3, lv.level, lv.url, err);
+      document.getElementById('regional-note').textContent =
+        lv.label + ' SURVEY FAILED TO LOAD // SEE BROWSER CONSOLE FOR DETAILS';
+    });
+  }
+
+  function renderEmptyLevel(parentFeature, levelIndex){
+    regionalCountryLayer.clearLayers();
+    const layer = L.geoJSON(parentFeature, {
+      style: ()=> ({ color:'#5c7b74', weight:1.4, fillColor:'#12211f', fillOpacity:0.55 })
+    }).addTo(regionalCountryLayer);
+    const lv = currentLevels[levelIndex];
+    document.getElementById('regional-note').textContent =
+      'NO ' + (lv && lv.label || 'SUBDIVISION') + ' SURVEY ON RECORD FOR THIS AREA';
+    Array.from(document.getElementById('regional-levels').children).forEach((c,i)=> c.classList.toggle('active', i===levelIndex));
+    if(layer.getBounds().isValid()){
+      regionalMap.flyToBounds(layer.getBounds(), { padding:[24,24], duration:0.4 });
+    }
+    plotRegionalMarkers(currentCountryName);
+  }
+
+  function drawOfflineOrNoData(rmap, iso3, geojsonOrNull, feature, name, noteOverride){
+    regionalCountryLayer.clearLayers();
+    document.getElementById('regional-breadcrumbs').innerHTML = '';
+    const layer = geojsonOrNull
+      ? L.geoJSON(geojsonOrNull, { style: ()=> ({ color:'#5c7b74', weight:1.1, fillColor:'#12211f', fillOpacity:0.55 }),
+          onEachFeature: (f,l)=>{
+            const nm = subdivName(f);
+            l.bindTooltip(nm, { className:'subdiv-label', sticky:true, direction:'top' });
+            l.on('mouseover', ()=> l.setStyle({ color:'#8fe8da', weight:1.8, fillColor:'#1c3d38', fillOpacity:0.7 }));
+            l.on('mouseout', ()=> l.setStyle({ color:'#5c7b74', weight:1.1, fillColor:'#12211f', fillOpacity:0.55 }));
+          } })
+      : L.geoJSON(feature, { style: ()=> ({ color:'#5c7b74', weight:1.4, fillColor:'#12211f', fillOpacity:0.55 }) });
+    layer.addTo(regionalCountryLayer);
+    document.getElementById('regional-note').textContent = geojsonOrNull
+      ? layer.getLayers().length + ' INTERNAL DIVISION' + (layer.getLayers().length===1?'':'S') + ' ON RECORD'
+      : (noteOverride || 'NO REGIONAL SUBDIVISION SURVEY ON FILE // NATIONAL BOUNDARY ONLY');
+    if(iso3 === 'RUS'){
+      rmap.fitBounds([[41, 19], [82, 180]], { padding:[20,20], duration:0.4, maxZoom:4 });
+    } else {
+      rmap.flyToBounds(layer.getBounds(), { padding:[20,20], duration:0.4 });
+    }
+    plotRegionalMarkers(name);
+  }
+
+  const HEAVY_LEVEL_THRESHOLD = 10000;
+
+  const EXCLUDE_LEVEL_THRESHOLD = 100000;
+
+  function renderLevelSwitcher(levels, activeIndex){
+    const box = document.getElementById('regional-levels');
+    box.innerHTML = '';
+    if(!levels || !levels.length) return;
+    levels.forEach((lv, idx)=>{
+      const isHeavy = lv.unitCount && lv.unitCount > HEAVY_LEVEL_THRESHOLD;
+      const btn = document.createElement('button');
+      btn.className = 'lvl-btn' + (idx === activeIndex ? ' active' : '') + (isHeavy ? ' heavy' : '');
+      btn.textContent = (isHeavy ? '⚠ ' : '') + lv.label + (lv.unitCount ? ' (' + lv.unitCount + ')' : '');
+      if(isHeavy){
+        btn.title = 'This level has ' + lv.unitCount + ' divisions on record -- loading them all at once can lag or freeze the page.';
+      }
+      btn.addEventListener('click', ()=>{
+        if(isHeavy){
+          const proceed = window.confirm(
+            'This level has ' + lv.unitCount.toLocaleString() + ' divisions on record for ' + currentCountryName + '.\n\n' +
+            'Loading that many shapes at once can make the page slow or unresponsive, especially on slower devices.\n\n' +
+            'Continue anyway?'
+          );
+          if(!proceed) return;
+        }
+        viewStack = [{ levelIndex: idx, parentFeature: null, label: currentCountryName }];
+        renderBreadcrumbs();
+        showLevel(idx, null);
+      });
+      box.appendChild(btn);
+    });
+  }
+
   function openRegionalWindow(feature, layer){
     const name = feature.properties.name;
-    const iso3 = COUNTRY_MAP[name];
+    const iso3 = (GB && GB.resolveIso3(name, feature.properties.iso_a3)) || COUNTRY_MAP[name] || null;
 
     if(selectedLayer && selectedLayer !== layer) selectedLayer.setStyle(baseCountryStyle());
     selectedLayer = layer;
@@ -150,6 +416,14 @@
     scanFlash();
     document.getElementById('regional-title').textContent = name.toUpperCase();
     document.getElementById('regional-panel').classList.add('open');
+    document.getElementById('regional-levels').innerHTML = '';
+    document.getElementById('regional-breadcrumbs').innerHTML = '';
+
+    currentIso3 = iso3;
+    currentCountryFeature = feature;
+    currentCountryName = name;
+    currentLevels = [];
+    viewStack = [];
 
     const rmap = ensureRegionalMap();
     regionalCountryLayer.clearLayers();
@@ -158,43 +432,24 @@
 
     setTimeout(()=> rmap.invalidateSize(), 30);
 
-    function finish(geojsonOrNull){
-      if(geojsonOrNull){
-        const sub = L.geoJSON(geojsonOrNull, {
-          style: ()=> ({ color:'#5c7b74', weight:1.1, fillColor:'#12211f', fillOpacity:0.55 }),
-          onEachFeature: (f, l)=>{
-            const nm = (f.properties && f.properties.name) || 'Unknown Division';
-            l.bindTooltip(nm, { className:'subdiv-label', sticky:true, direction:'top' });
-            l.on('mouseover', ()=> l.setStyle({ color:'#8fe8da', weight:1.8, fillColor:'#1c3d38', fillOpacity:0.7 }));
-            l.on('mouseout', ()=> l.setStyle({ color:'#5c7b74', weight:1.1, fillColor:'#12211f', fillOpacity:0.55 }));
-          }
-        }).addTo(regionalCountryLayer);
-        document.getElementById('regional-note').textContent =
-          sub.getLayers().length + ' INTERNAL DIVISION' + (sub.getLayers().length===1?'':'S') + ' ON RECORD';
-        if(iso3 === 'RUS'){
-          rmap.fitBounds([[41, 19], [82, 180]], { padding:[20,20], duration:0.4, maxZoom:4 });
-        } else {
-          rmap.flyToBounds(sub.getBounds(), { padding:[20,20], duration:0.4 });
-        }
-      } else {
-        const outline = L.geoJSON(feature, {
-          style: ()=> ({ color:'#5c7b74', weight:1.4, fillColor:'#12211f', fillOpacity:0.55 })
-        }).addTo(regionalCountryLayer);
-        document.getElementById('regional-note').textContent =
-          'NO REGIONAL SUBDIVISION SURVEY ON FILE // NATIONAL BOUNDARY ONLY';
-        if(iso3 === 'RUS'){
-          rmap.fitBounds([[41, 19], [82, 180]], { padding:[20,20], duration:0.4, maxZoom:4 });
-        } else {
-          rmap.flyToBounds(outline.getBounds(), { padding:[20,20], duration:0.4 });
-        }
-      }
-      plotRegionalMarkers(name);
+    function offlineFallback(){
+      const gj = iso3 ? (window.CONTINUANCE_COUNTRY_GEO || {})[iso3] : null;
+      drawOfflineOrNoData(rmap, iso3, gj || null, feature, name);
     }
 
-    if(!iso3){ finish(null); return; }
-    if(geoCache[iso3]){ finish(geoCache[iso3]); return; }
-    const gj = (window.CONTINUANCE_COUNTRY_GEO || {})[iso3];
-    if(gj){ geoCache[iso3] = gj; finish(gj); } else { finish(null); }
+    if(!iso3 || !GB){ offlineFallback(); return; }
+
+    GB.fetchLevels(iso3).then(levels=>{
+      const subLevels = levels.filter(l=> l.level !== 'ADM0' && !(l.unitCount && l.unitCount > EXCLUDE_LEVEL_THRESHOLD));
+      if(!subLevels.length){ offlineFallback(); return; }
+      currentLevels = subLevels;
+      renderLevelSwitcher(subLevels, 0);
+      viewStack = [{ levelIndex: 0, parentFeature: null, label: name }];
+      renderBreadcrumbs();
+      showLevel(0, null);
+    }).catch(()=>{
+      offlineFallback();
+    });
   }
 
   function locMatchesCountry(loc, countryName){
@@ -248,6 +503,10 @@
 
   function closeRegionalWindow(){
     document.getElementById('regional-panel').classList.remove('open');
+    document.getElementById('regional-levels').innerHTML = '';
+    document.getElementById('regional-breadcrumbs').innerHTML = '';
+    viewStack = [];
+    currentLevels = [];
     if(selectedLayer){ selectedLayer.setStyle(baseCountryStyle()); selectedLayer = null; }
   }
   document.getElementById('regional-close').addEventListener('click', closeRegionalWindow);
@@ -348,6 +607,12 @@
   document.getElementById('toggle-incidents').addEventListener('change', e=>{
     if(e.target.checked) map.addLayer(incidentLayerGroup); else map.removeLayer(incidentLayerGroup);
   });
+  const enclaveToggleEl = document.getElementById('toggle-enclaves');
+  if(enclaveToggleEl){
+    enclaveToggleEl.addEventListener('change', e=>{
+      if(e.target.checked) map.addLayer(enclaveLayerGroup); else map.removeLayer(enclaveLayerGroup);
+    });
+  }
 
     document.querySelectorAll('.tab-btn').forEach(btn=>{
     btn.addEventListener('click', ()=>{
@@ -543,9 +808,6 @@
   hideSidebarBtn.addEventListener('click', ()=> setSidebarHidden(true));
   showSidebarTab.addEventListener('click', ()=> setSidebarHidden(false));
 
-    // Survey Layers panel: collapsed by default on narrow/mobile screens
-  // (handled purely by the CSS media query — no class needed to start hidden),
-  // toggled open with a small tab and closed again with its own close button.
   const showLayersTab = document.getElementById('show-layers-tab');
   const layerControlClose = document.getElementById('layer-control-close');
   if(showLayersTab && layerControlClose){
@@ -553,13 +815,6 @@
     layerControlClose.addEventListener('click', ()=> shellEl.classList.remove('layers-open'));
   }
 
-    // ---- Full survey snapshot export ----
-  // Renders the entire world, every visible faction holding / exclusion zone /
-  // historical incident as a small dot, onto an offscreen canvas and downloads
-  // it as a PNG. This is drawn from the raw geodata + coordinate data directly
-  // (rather than screenshotting the live Leaflet DOM), so it always captures
-  // the whole map at full resolution regardless of current pan/zoom or screen
-  // size, and works the same on mobile as on desktop.
   function mercY(latDeg){
     const clamped = Math.max(Math.min(latDeg, 85.05), -85.05);
     const rad = clamped * Math.PI / 180;
@@ -747,7 +1002,7 @@
     ctx.fillText('Boundaries: Natural Earth / amCharts geodata (free-licensed) · Rendered with Leaflet · Generated by The Continuance Archive', marginX, totalH - 18);
 
     canvas.toBlob(blob=>{
-      if(!blob){ alert('Snapshot generation failed — please try again.'); return; }
+      if(!blob){ alert('Snapshot generation failed. Please try again.'); return; }
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
